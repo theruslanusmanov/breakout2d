@@ -1,5 +1,10 @@
-use bevy::input::keyboard::KeyboardInput;
+//! A simplified implementation of the classic game "Breakout".
+//!
+//! Demonstrates Bevy's stepping capabilities if compiled with the `bevy_debug_stepping` feature.
+
 use bevy::prelude::*;
+
+mod stepping;
 
 // These constants are defined in `Transform` units.
 // Using the default 2D camera they correspond 1:1 with screen pixels.
@@ -53,9 +58,13 @@ fn main() {
         .insert_resource(Score(0))
         .insert_resource(ClearColor(BACKGROUND_COLOR))
         .add_systems(Startup, setup)
+        // Add our simulation systems to the update schedule
+        // which is called once per frame.
         .add_systems(
             Update,
-            (apply_velocity, move_paddle, check_for_collisions).chain(),
+            (apply_velocity, move_paddle, check_for_collisions)
+                // `chain`ing systems together runs them in order
+                .chain(),
         )
         .add_systems(Update, update_scoreboard)
         .add_observer(play_collision_sound)
@@ -80,13 +89,16 @@ struct Brick;
 #[derive(Resource, Deref)]
 struct CollisionSound(Handle<AudioSource>);
 
+// Default must be implemented to define this as a required component for the Wall component below
 #[derive(Component, Default)]
 struct Collider;
 
+// This is a collection of the components that define a "Wall" in our game
 #[derive(Component)]
 #[require(Sprite, Transform, Collider)]
 struct Wall;
 
+/// Which side of the arena is this wall located on?
 enum WallLocation {
     Left,
     Right,
@@ -95,6 +107,7 @@ enum WallLocation {
 }
 
 impl WallLocation {
+    /// Location of the *center* of the wall, used in `transform.translation()`
     fn position(&self) -> Vec2 {
         match self {
             WallLocation::Left => Vec2::new(LEFT_WALL, 0.),
@@ -104,9 +117,11 @@ impl WallLocation {
         }
     }
 
+    /// (x, y) dimensions of the wall, used in `transform.scale()`
     fn size(&self) -> Vec2 {
         let arena_height = TOP_WALL - BOTTOM_WALL;
         let arena_width = RIGHT_WALL - LEFT_WALL;
+        // Make sure we haven't messed up our constants
         assert!(arena_height > 0.0);
         assert!(arena_width > 0.0);
 
@@ -122,12 +137,20 @@ impl WallLocation {
 }
 
 impl Wall {
+    // This "builder method" allows us to reuse logic across our wall entities,
+    // making our code easier to read and less prone to bugs when we change the logic
+    // Notice the use of Sprite and Transform alongside Wall, overwriting the default values defined for the required components
     fn new(location: WallLocation) -> (Wall, Sprite, Transform) {
         (
             Wall,
             Sprite::from_color(WALL_COLOR, Vec2::ONE),
             Transform {
+                // We need to convert our Vec2 into a Vec3, by giving it a z-coordinate
+                // This is used to determine the order of our sprites
                 translation: location.position().extend(0.0),
+                // The z-scale of 2D objects must always be 1.0,
+                // or their ordering will be affected in surprising ways.
+                // See https://github.com/bevyengine/bevy/issues/4149
                 scale: location.size().extend(1.0),
                 ..default()
             },
@@ -135,23 +158,28 @@ impl Wall {
     }
 }
 
+// This resource tracks the game's score
 #[derive(Resource, Deref, DerefMut)]
 struct Score(usize);
 
 #[derive(Component)]
 struct ScoreboardUi;
 
+// Add the game's entities to our world
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     asset_server: Res<AssetServer>,
 ) {
+    // Camera
     commands.spawn(Camera2d);
 
+    // Sound
     let ball_collision_sound = asset_server.load("sounds/breakout_collision.ogg");
     commands.insert_resource(CollisionSound(ball_collision_sound));
 
+    // Paddle
     let paddle_y = BOTTOM_WALL + GAP_BETWEEN_PADDLE_AND_FLOOR;
 
     commands.spawn((
@@ -165,6 +193,7 @@ fn setup(
         Collider,
     ));
 
+    // Ball
     commands.spawn((
         Mesh2d(meshes.add(Circle::default())),
         MeshMaterial2d(materials.add(BALL_COLOR)),
@@ -317,13 +346,16 @@ fn check_for_collisions(
         );
 
         if let Some(collision) = collision {
+            // Trigger observers of the "BallCollided" event
             commands.trigger(BallCollided);
 
+            // Bricks should be despawned and increment the scoreboard on collision
             if maybe_brick.is_some() {
                 commands.entity(collider_entity).despawn();
                 **score += 1;
             }
 
+            // Reflect the ball's velocity when it collides
             let mut reflect_x = false;
             let mut reflect_y = false;
 
